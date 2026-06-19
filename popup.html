@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Amazon Product</title>
+  <style>
+    body {
+      width: 280px;
+      margin: 0;
+      padding: 16px;
+      font-family: Arial, sans-serif;
+      background: #f7f7f7;
+      color: #222;
+    }
+
+    h1 {
+      font-size: 16px;
+      margin: 0 0 12px;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px 12px;
+      border: none;
+      border-radius: 6px;
+      background: #ff9900;
+      color: #111;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #f08c00;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    #status {
+      margin-top: 12px;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      line-height: 1.4;
+      background: #fff;
+      border: 1px solid #ddd;
+      white-space: pre-wrap;
+    }
+
+    .success {
+      color: #0a7a2f;
+    }
+
+    .error {
+      color: #c62828;
+    }
+
+    .loading {
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <h1>Amazon Product Scraper</h1>
+
+  <button id="getProductBtn">Get Product</button>
+
+  <div id="status">Open an Amazon product page, then click Get Product.</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
