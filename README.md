@@ -1,75 +1,46 @@
-# Amazon Product To Google Sheets Extension
+# Standalone Google Apps Script
 
-Chrome Extension Manifest V3 dùng để lấy dữ liệu sản phẩm Amazon và gửi vào Google Sheets qua Google Apps Script Web App.
-
-## Dữ liệu được nhập
-
-Extension hiện chỉ nhập các cột sau:
+Bản này dùng cho Apps Script project tạo riêng tại:
 
 ```txt
-Product Link | SKU | TRADEMARK | Variants | Cost
+https://script.google.com/home
 ```
 
-Mapping dữ liệu:
+## Việc cần sửa trong Code.gs
+
+### 1. Dán Spreadsheet ID
+
+Trong `Code.gs`, sửa:
+
+```js
+const SPREADSHEET_ID = "PASTE_YOUR_SPREADSHEET_ID_HERE";
+```
+
+Spreadsheet ID lấy từ URL Google Sheets:
 
 ```txt
-Product Link = Amazon URL
-SKU = ASIN
-TRADEMARK = Brand
-Variants = Selected variants
-Cost = Amazon price
+https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit
 ```
 
-Dữ liệu bắt đầu từ hàng 2. Nếu một hàng đã có text ở bất kỳ ô nào, script sẽ tự động bỏ qua và ghi vào hàng trống tiếp theo.
-
-## Tên sheet
-
-Tên file Google Sheets không quan trọng.
-
-Bạn cần đổi tên tab sheet bên dưới thành:
-
-```txt
-Listing Product
-```
-
-Nếu muốn dùng tên tab khác, sửa dòng này trong `Code.gs`:
+### 2. Sửa tên tab sheet nếu cần
 
 ```js
 const SHEET_NAME = "Listing Product";
 ```
 
-## Header
+Tên này phải khớp chính xác với tab sheet bên dưới Google Sheets.
 
-Header nằm ở hàng 1.
-
-Có thể đổi thứ tự cột thoải mái vì Apps Script tự tìm cột theo tên header.
-
-Nếu đổi tên header, cần thêm tên mới vào `HEADER_ALIASES` trong `Code.gs`.
-
-Ví dụ nếu đổi `TRADEMARK` thành `Brand Name`, thêm:
-
-```js
-brand: [
-  "TRADEMARK",
-  "Trademark",
-  "Brand",
-  "Product Brand",
-  "Brand Name"
-]
-```
-
-## Cài Apps Script
-
-1. Mở Google Sheets.
-2. Vào:
+## Header cần có ở hàng 1
 
 ```txt
-Extensions → Apps Script
+Product Link | SKU | TRADEMARK | Variants | Cost | Product Image
 ```
 
-3. Dán code trong file `Code.gs`.
-4. Save.
-5. Deploy:
+Có thể đổi thứ tự cột. Script tự tìm cột theo header.
+
+## Deploy
+
+Trong Apps Script:
 
 ```txt
 Deploy → New deployment → Web app
@@ -82,59 +53,18 @@ Execute as: Me
 Who has access: Anyone
 ```
 
-Copy Web App URL sau khi deploy.
+Sau đó copy Web App URL và dán vào `.env` của extension.
 
-## Cấu hình Extension
+## Ghi chú
 
-Copy `.env.example` thành `.env`:
+Bản này dùng:
 
-```bash
-cp .env.example .env
+```js
+SpreadsheetApp.openById(SPREADSHEET_ID)
 ```
 
-Dán Web App URL vào `.env`:
+Không dùng:
 
-```txt
-GOOGLE_APPS_SCRIPT_WEB_APP_URL=https://script.google.com/macros/s/xxxxxxxxxxxx/exec
-```
-
-Tạo `config.json`:
-
-```bash
-npm run build:config
-```
-
-Nếu không dùng Node.js, copy `config.example.json` thành `config.json` rồi sửa URL trực tiếp.
-
-## Load Extension
-
-Mở Chrome:
-
-```txt
-chrome://extensions/
-```
-
-Sau đó:
-
-```txt
-Bật Developer mode
-→ Load unpacked
-→ Chọn thư mục amazon-to-sheets-extension
-```
-
-## Sử dụng
-
-1. Mở trang chi tiết sản phẩm Amazon.
-2. Bấm icon extension.
-3. Bấm `Get Product`.
-4. Kiểm tra Google Sheets.
-
-## Không commit lên Git
-
-Không commit:
-
-```txt
-.env
-config.json
-node_modules/
+```js
+SpreadsheetApp.getActiveSpreadsheet()
 ```

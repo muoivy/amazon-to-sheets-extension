@@ -16,7 +16,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     });
 
-  // Bắt buộc return true vì xử lý async.
   return true;
 });
 
@@ -69,18 +68,15 @@ async function sendProductToSheets(productData) {
     brand: productData.brand || "",
     title: productData.title || "",
     price: productData.price || "",
-    variants: productData.variants || ""
+    variants: productData.variants || "",
+    image: productData.image || ""
   };
 
   const response = await fetch(googleAppsScriptWebAppUrl, {
     method: "POST",
-
-    // Dùng text/plain để tránh preflight phức tạp với Apps Script Web App.
-    // Nội dung bên trong vẫn là JSON string.
     headers: {
       "Content-Type": "text/plain;charset=utf-8"
     },
-
     body: JSON.stringify(payload)
   });
 

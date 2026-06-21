@@ -1,21 +1,37 @@
 /**
- * Google Apps Script nhận dữ liệu từ Chrome Extension
- * và fill vào đúng cột theo tên header ở hàng 1.
+ * Google Apps Script standalone project.
  *
- * Sheet tab nên đặt tên là: Listing Product
- * Nếu bạn dùng tên tab khác, sửa SHEET_NAME bên dưới.
+ * Dùng cho trường hợp Apps Script tạo riêng tại:
+ * https://script.google.com/home
+ *
+ * Không dùng SpreadsheetApp.getActiveSpreadsheet()
+ * mà dùng SpreadsheetApp.openById(SPREADSHEET_ID)
  */
 
+// Dán Spreadsheet ID của file Google Sheets vào đây.
+// Ví dụ URL sheet:
+// https://docs.google.com/spreadsheets/d/1AbcDEFxxxxxxxxxxxx/edit
+// thì Spreadsheet ID là phần: 1AbcDEFxxxxxxxxxxxx
+const SPREADSHEET_ID = "PASTE_YOUR_SPREADSHEET_ID_HERE";
+
+// Tên tab sheet bên dưới Google Sheets.
+// Phải khớp chính xác chữ hoa/thường và khoảng trắng.
 const SHEET_NAME = "Listing Product";
 
 const HEADER_ROW = 1;
 const DATA_START_ROW = 2;
 
 /**
+ * FORMULA = hiển thị ảnh trực tiếp trong ô bằng =IMAGE("url")
+ * URL     = chỉ lưu URL ảnh dạng text
+ */
+const PRODUCT_IMAGE_MODE = "FORMULA";
+
+/**
  * Mapping field từ Extension sang tên cột trong Google Sheets.
  *
  * Có thể đổi thứ tự cột thoải mái.
- * Nếu đổi tên header, hãy thêm tên mới vào mảng alias tương ứng.
+ * Nếu đổi tên header, thêm tên mới vào alias tương ứng.
  */
 const HEADER_ALIASES = {
   link: [
@@ -40,20 +56,30 @@ const HEADER_ALIASES = {
   variants: [
     "Variants",
     "Variant",
-    "Variation"
+    "Variation",
+    "Size"
   ],
 
   price: [
     "Cost",
     "Price",
     "Product Cost"
+  ],
+
+  image: [
+    "Product Image",
+    "Image",
+    "Image URL",
+    "Main Image"
   ]
 };
 
 function doGet() {
   return jsonResponse({
     ok: true,
-    message: "Amazon to Google Sheets Web App is running."
+    message: "Amazon to Google Sheets Web App is running.",
+    spreadsheetId: SPREADSHEET_ID,
+    sheetName: SHEET_NAME
   });
 }
 
@@ -67,24 +93,25 @@ function doPost(e) {
       throw new Error("No POST data received.");
     }
 
+    if (!SPREADSHEET_ID || SPREADSHEET_ID === "PASTE_YOUR_SPREADSHEET_ID_HERE") {
+      throw new Error("Bạn chưa cấu hình SPREADSHEET_ID trong Code.gs.");
+    }
+
     const data = JSON.parse(e.postData.contents);
 
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sheet = getTargetSheet(ss);
 
     const headerMap = getHeaderMap(sheet);
     const targetRow = findFirstEmptyRow(sheet);
 
-    /**
-     * Chỉ fill các cột bạn yêu cầu:
-     * Product Link, SKU, TRADEMARK, Variants, Cost
-     */
     const valuesToWrite = {
       link: data.link || "",
       asin: data.asin || "",
       brand: data.brand || "",
       variants: data.variants || "",
-      price: data.price || ""
+      price: data.price || "",
+      image: data.image || ""
     };
 
     const missingHeaders = [];
@@ -97,7 +124,7 @@ function doPost(e) {
         return;
       }
 
-      sheet.getRange(targetRow, columnIndex).setValue(valuesToWrite[field]);
+      writeCellValue(sheet, targetRow, columnIndex, field, valuesToWrite[field]);
     });
 
     if (missingHeaders.length > 0) {
@@ -126,12 +153,33 @@ function doPost(e) {
   }
 }
 
+function writeCellValue(sheet, rowIndex, columnIndex, field, value) {
+  const range = sheet.getRange(rowIndex, columnIndex);
+
+  if (field === "image" && value) {
+    if (PRODUCT_IMAGE_MODE === "FORMULA") {
+      range.setFormula('=IMAGE("' + escapeFormulaString(value) + '", 1)');
+      sheet.setRowHeight(rowIndex, 120);
+      return;
+    }
+
+    range.setValue(value);
+    return;
+  }
+
+  range.setValue(value);
+}
+
+function escapeFormulaString(value) {
+  return String(value || "").replace(/"/g, '""');
+}
+
 function getTargetSheet(ss) {
   const sheet = ss.getSheetByName(SHEET_NAME);
 
   if (!sheet) {
     throw new Error(
-      "Không tìm thấy sheet tab tên '" + SHEET_NAME + "'. " +
+      "Không tìm thấy tab sheet tên '" + SHEET_NAME + "'. " +
       "Hãy đổi tên tab sheet hoặc sửa SHEET_NAME trong Code.gs."
     );
   }

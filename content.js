@@ -1,5 +1,4 @@
 (() => {
-  // Tránh đăng ký listener nhiều lần nếu content.js bị inject lại.
   if (window.__AMAZON_TO_SHEETS_CONTENT_LOADED__) {
     return;
   }
@@ -28,19 +27,12 @@
   }
 
   function normalizePrice(price) {
-    return cleanText(price)
-      .replace(/\s+/g, "")
-      .trim();
+    return cleanText(price).replace(/\s+/g, "").trim();
   }
 
   function getProductLink() {
     const canonical = document.querySelector('link[rel="canonical"]')?.href;
-
-    if (canonical) {
-      return canonical;
-    }
-
-    return window.location.href;
+    return canonical || window.location.href;
   }
 
   function getASIN() {
@@ -59,8 +51,8 @@
       }
     }
 
-    const detailBulletsText = document.body.innerText || "";
-    const asinMatchFromText = detailBulletsText.match(/\bASIN\s*[:‏‎]?\s*([A-Z0-9]{10})\b/i);
+    const bodyText = document.body.innerText || "";
+    const asinMatchFromText = bodyText.match(/\bASIN\s*[:‏‎]?\s*([A-Z0-9]{10})\b/i);
 
     if (asinMatchFromText) {
       return asinMatchFromText[1].toUpperCase();
@@ -161,17 +153,6 @@
     return match ? match[0].replace(/\s+/g, "") : "";
   }
 
-  /**
-   * Ưu tiên lấy Typical price nếu sản phẩm đang giảm giá.
-   *
-   * Ví dụ Amazon hiển thị:
-   * Typical price: $4.48
-   *
-   * Kết quả Cost sẽ là:
-   * $4.48
-   *
-   * Nếu không có Typical price thì fallback lấy giá hiện tại.
-   */
   function getTypicalPrice() {
     const priceRoots = document.querySelectorAll(`
       #corePrice_feature_div,
@@ -183,12 +164,8 @@
       #buybox
     `);
 
-    /**
-     * Cách 1: tìm text có dạng "Typical price: $4.48"
-     */
     for (const root of priceRoots) {
       const rootText = cleanText(root.textContent);
-
       const directMatch = rootText.match(/Typical\s+price\s*:?\s*([$€£¥₹]\s*\d[\d,.]*)/i);
 
       if (directMatch && directMatch[1]) {
@@ -196,10 +173,6 @@
       }
     }
 
-    /**
-     * Cách 2: tìm element có chữ "Typical price",
-     * sau đó lấy price trong chính element hoặc parent gần nhất.
-     */
     const allElements = document.querySelectorAll("span, div, td, th");
 
     for (const el of allElements) {
@@ -288,37 +261,19 @@
       .trim();
   }
 
-  /**
-   * Chỉ lấy Size đang được chọn trên Amazon.
-   *
-   * Ví dụ Amazon hiển thị:
-   * Size: 6 Count (Pack of 1)
-   *
-   * Kết quả trả về:
-   * 6 Count (Pack of 1)
-   *
-   * Không lấy Color, Style, Flavor...
-   */
   function getVariants() {
     const sizeContainerSelectors = [
       "#variation_size_name",
       "#variation_size",
       "#variation_count",
       "#variation_item_package_quantity",
-      "#variation_number_of_items",
-      "[id='variation_size_name']",
-      "[id='variation_size']"
+      "#variation_number_of_items"
     ];
 
-    /**
-     * Cách 1: lấy trực tiếp từ block size chuẩn.
-     */
     for (const selector of sizeContainerSelectors) {
       const container = document.querySelector(selector);
 
-      if (!container) {
-        continue;
-      }
+      if (!container) continue;
 
       let value = cleanText(container.querySelector(".selection")?.textContent);
 
@@ -355,11 +310,6 @@
       }
     }
 
-    /**
-     * Cách 2: lấy từ inline twister mới.
-     * Ví dụ:
-     * #inline-twister-expanded-dimension-text-size_name
-     */
     const inlineSizeSelectors = [
       "#inline-twister-expanded-dimension-text-size_name",
       "#inline-twister-expanded-dimension-text-size",
@@ -377,15 +327,10 @@
       }
     }
 
-    /**
-     * Cách 3: quét text trong vùng twister để tìm dòng:
-     * Size: xxx
-     */
     const twisterRoot = document.querySelector("#twister, #twister_feature_div, #centerCol");
 
     if (twisterRoot) {
       const text = cleanText(twisterRoot.textContent);
-
       const sizeMatch = text.match(/\bSize\s*:\s*([^|]+?)(?=\s*(Style|Color|Colour|Flavor|Flavour|Scent|Pattern|Pack|$))/i);
 
       if (sizeMatch && sizeMatch[1]) {
@@ -404,30 +349,83 @@
       }
     }
 
-    /**
-     * Cách 4: fallback từ aria-label/title của option đang chọn.
-     */
-    const selectedOptions = document.querySelectorAll(`
-      #twister .swatchSelect,
-      #twister .a-button-selected,
-      #twister li[aria-checked='true'],
-      #twister_feature_div .swatchSelect,
-      #twister_feature_div .a-button-selected,
-      #twister_feature_div li[aria-checked='true']
-    `);
+    return "";
+  }
 
-    for (const el of selectedOptions) {
-      const text = cleanText(
-        el.getAttribute("title") ||
-        el.getAttribute("aria-label") ||
-        el.textContent
+  function isValidImageUrl(url) {
+    return Boolean(url && /^https?:\/\//i.test(url) && /\.(jpg|jpeg|png|webp)(\?|$)/i.test(url));
+  }
+
+  function getLargestImageFromDynamicImage(dynamicImageValue) {
+    if (!dynamicImageValue) {
+      return "";
+    }
+
+    try {
+      const imageMap = JSON.parse(dynamicImageValue);
+      let bestUrl = "";
+      let bestArea = 0;
+
+      Object.keys(imageMap).forEach(url => {
+        const size = imageMap[url];
+
+        if (!Array.isArray(size) || size.length < 2) {
+          return;
+        }
+
+        const width = Number(size[0]) || 0;
+        const height = Number(size[1]) || 0;
+        const area = width * height;
+
+        if (area > bestArea) {
+          bestArea = area;
+          bestUrl = url;
+        }
+      });
+
+      return bestUrl;
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function getProductImage() {
+    const imageSelectors = [
+      "#landingImage",
+      "#imgTagWrapperId img",
+      "#main-image-container img",
+      "#imageBlock img",
+      "#altImages img"
+    ];
+
+    for (const selector of imageSelectors) {
+      const img = document.querySelector(selector);
+
+      if (!img) {
+        continue;
+      }
+
+      const dynamicImage = getLargestImageFromDynamicImage(
+        img.getAttribute("data-a-dynamic-image")
       );
 
-      const match = text.match(/^Size\s*:\s*(.+)$/i);
+      const imageUrl =
+        img.getAttribute("data-old-hires") ||
+        dynamicImage ||
+        img.currentSrc ||
+        img.src ||
+        img.getAttribute("data-src");
 
-      if (match && match[1]) {
-        return normalizeSizeValue(match[1]);
+      if (isValidImageUrl(imageUrl)) {
+        return imageUrl;
       }
+    }
+
+    const html = document.documentElement.innerHTML;
+    const match = html.match(/https?:\/\/[^"']*m\.media-amazon\.com\/images\/I\/[^"']+\.(?:jpg|jpeg|png|webp)/i);
+
+    if (match && match[0]) {
+      return match[0].replace(/\\u002F/g, "/");
     }
 
     return "";
@@ -440,7 +438,8 @@
       brand: getBrand(),
       title: getTitle(),
       price: getPrice(),
-      variants: getVariants()
+      variants: getVariants(),
+      image: getProductImage()
     };
 
     const warnings = [];
@@ -450,6 +449,7 @@
     if (!data.title) warnings.push("Title");
     if (!data.price) warnings.push("Price");
     if (!data.variants) warnings.push("Size");
+    if (!data.image) warnings.push("Product Image");
 
     if (!data.asin && !data.title) {
       return {
