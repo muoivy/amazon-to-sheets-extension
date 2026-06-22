@@ -103,7 +103,6 @@ function doPost(e) {
     const sheet = getTargetSheet(ss);
 
     const headerMap = getHeaderMap(sheet);
-    const targetRow = findFirstEmptyRow(sheet);
 
     const valuesToWrite = {
       link: data.link || "",
@@ -114,13 +113,38 @@ function doPost(e) {
       image: data.image || ""
     };
 
+    // Tìm row đã có Product Link trùng → update, không tạo mới
+    const linkColumnIndex = findColumnIndexByAliases(headerMap, HEADER_ALIASES["link"]);
+    let targetRow = null;
+    let isUpdate = false;
+
+    if (linkColumnIndex && valuesToWrite.link) {
+      targetRow = findRowByLink(sheet, linkColumnIndex, valuesToWrite.link);
+      if (targetRow) {
+        isUpdate = true;
+      }
+    }
+
+    // Nếu không tìm thấy row trùng → append dòng mới
+    if (!targetRow) {
+      targetRow = findFirstEmptyRow(sheet);
+    }
+
     const missingHeaders = [];
 
     Object.keys(valuesToWrite).forEach(field => {
       const columnIndex = findColumnIndexByAliases(headerMap, HEADER_ALIASES[field]);
 
       if (!columnIndex) {
-        missingHeaders.push(field);
+        // Chỉ báo lỗi với các field bắt buộc (bỏ qua field không có cột tương ứng)
+        if (["link", "asin"].includes(field)) {
+          missingHeaders.push(field);
+        }
+        return;
+      }
+
+      // Khi update: bỏ qua ghi đè cột link (đã có rồi)
+      if (isUpdate && field === "link") {
         return;
       }
 
@@ -129,15 +153,18 @@ function doPost(e) {
 
     if (missingHeaders.length > 0) {
       throw new Error(
-        "Không tìm thấy header cho field: " + missingHeaders.join(", ") +
+        "Không tìm thấy header cho field bắt buộc: " + missingHeaders.join(", ") +
         ". Hãy kiểm tra hàng 1 hoặc thêm alias trong HEADER_ALIASES."
       );
     }
 
     return jsonResponse({
       ok: true,
-      message: "Saved to Google Sheets successfully.",
-      row: targetRow
+      message: isUpdate
+        ? "Đã cập nhật sản phẩm trong Google Sheets (row " + targetRow + ")."
+        : "Đã thêm sản phẩm mới vào Google Sheets (row " + targetRow + ").",
+      row: targetRow,
+      action: isUpdate ? "updated" : "inserted"
     });
   } catch (error) {
     return jsonResponse({
@@ -224,6 +251,34 @@ function findColumnIndexByAliases(headerMap, aliases) {
 
     if (headerMap[normalizedAlias]) {
       return headerMap[normalizedAlias];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Tìm row đã có link trùng trong cột Product Link.
+ * Trả về row index (1-based) nếu tìm thấy, null nếu không.
+ */
+function findRowByLink(sheet, linkColumnIndex, linkToFind) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < DATA_START_ROW) {
+    return null;
+  }
+
+  const numberOfRows = lastRow - DATA_START_ROW + 1;
+  const values = sheet
+    .getRange(DATA_START_ROW, linkColumnIndex, numberOfRows, 1)
+    .getDisplayValues();
+
+  const normalizedTarget = String(linkToFind).trim().toLowerCase();
+
+  for (let i = 0; i < values.length; i++) {
+    const cellValue = String(values[i][0] || "").trim().toLowerCase();
+    if (cellValue && cellValue === normalizedTarget) {
+      return DATA_START_ROW + i;
     }
   }
 

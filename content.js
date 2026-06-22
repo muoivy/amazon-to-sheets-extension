@@ -30,9 +30,17 @@
     return cleanText(price).replace(/\s+/g, "").trim();
   }
 
-  function getProductLink() {
-    const canonical = document.querySelector('link[rel="canonical"]')?.href;
-    return canonical || window.location.href;
+  function getProductLink(asin) {
+    if (asin) {
+      return "https://www.amazon.com/dp/" + asin;
+    }
+    // Fallback: extract ASIN from canonical or current URL
+    const canonical = document.querySelector('link[rel="canonical"]')?.href || window.location.href;
+    const match = canonical.match(/\/dp\/([A-Z0-9]{10})/i);
+    if (match) {
+      return "https://www.amazon.com/dp/" + match[1].toUpperCase();
+    }
+    return canonical;
   }
 
   function getASIN() {
@@ -432,9 +440,10 @@
   }
 
   function scrapeAmazonProduct() {
+    const asin = getASIN();
     const data = {
-      link: getProductLink(),
-      asin: getASIN(),
+      link: getProductLink(asin),
+      asin: asin,
       brand: getBrand(),
       title: getTitle(),
       price: getPrice(),

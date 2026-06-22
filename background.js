@@ -66,19 +66,24 @@ async function sendProductToSheets(productData) {
     link: productData.link || "",
     asin: productData.asin || "",
     brand: productData.brand || "",
-    title: productData.title || "",
     price: productData.price || "",
     variants: productData.variants || "",
     image: productData.image || ""
   };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
 
   const response = await fetch(googleAppsScriptWebAppUrl, {
     method: "POST",
     headers: {
       "Content-Type": "text/plain;charset=utf-8"
     },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal: controller.signal
   });
+
+  clearTimeout(timeoutId);
 
   const responseText = await response.text();
 

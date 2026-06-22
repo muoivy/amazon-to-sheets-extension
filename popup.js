@@ -67,7 +67,9 @@ getProductBtn.addEventListener("click", async () => {
       throw new Error(sendResult?.error || "Gửi dữ liệu sang Google Sheets thất bại.");
     }
 
-    let message = "✅ Đã gửi sản phẩm vào Google Sheets thành công.";
+    let message = sendResult.action === "updated"
+      ? "🔄 Đã cập nhật sản phẩm trong Google Sheets."
+      : "✅ Đã thêm sản phẩm mới vào Google Sheets.";
 
     if (scrapeResult.warnings && scrapeResult.warnings.length > 0) {
       message += "\n\n⚠️ Thiếu dữ liệu: " + scrapeResult.warnings.join(", ");
