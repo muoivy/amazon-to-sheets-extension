@@ -177,16 +177,10 @@
 
     const escapedLabels = labels.map(label => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
     const labelPattern = escapedLabels.join("|");
-    const directRegex = new RegExp(`(?:${labelPattern})\\s*:?\\s*([$€£¥₹]\\s*\\d[\\d,.]*)`, "i");
+    const pricePattern = "([$€£¥₹]\\s*\\d[\\d,.]*)";
+    const labelThenPriceRegex = new RegExp(`(?:${labelPattern})\\s*:?\\s*${pricePattern}`, "i");
     const labelRegex = new RegExp(`(?:${labelPattern})`, "i");
-    const rootText = cleanText(root.textContent);
-    const directMatch = rootText.match(directRegex);
-
-    if (directMatch && directMatch[1]) {
-      return directMatch[1].replace(/\s+/g, "");
-    }
-
-    const elements = root.querySelectorAll("span, div, td, th");
+    const elements = root.querySelectorAll(".basisPrice, .a-row, .a-section, tr, span, div, td, th");
 
     for (const el of elements) {
       const text = cleanText(el.textContent);
@@ -195,29 +189,24 @@
         continue;
       }
 
-      const elementMatch = text.match(directRegex);
+      const textAfterLabel = text.replace(new RegExp(`^.*?(?:${labelPattern})`, "i"), "");
+      const labeledPriceMatch = textAfterLabel.match(new RegExp(pricePattern));
 
-      if (elementMatch && elementMatch[1]) {
-        return elementMatch[1].replace(/\s+/g, "");
+      if (labeledPriceMatch && labeledPriceMatch[1]) {
+        return labeledPriceMatch[1].replace(/\s+/g, "");
       }
 
-      const parent = el.closest(".basisPrice, .a-row, .a-section, tr");
-
-      if (!parent || !root.contains(parent)) {
-        continue;
-      }
-
-      const parentMatch = cleanText(parent.textContent).match(directRegex);
-
-      if (parentMatch && parentMatch[1]) {
-        return parentMatch[1].replace(/\s+/g, "");
-      }
-
-      const offscreenPrice = parent.querySelector(".a-price .a-offscreen, .a-offscreen");
-      const price = extractPriceFromText(offscreenPrice?.textContent);
+      const sameRowPrice = el.querySelector(".a-price.a-text-price .a-offscreen, .a-text-price .a-offscreen");
+      const price = extractPriceFromText(sameRowPrice?.textContent);
 
       if (price) {
         return price;
+      }
+
+      const directMatch = text.match(labelThenPriceRegex);
+
+      if (directMatch && directMatch[1]) {
+        return directMatch[1].replace(/\s+/g, "");
       }
     }
 
