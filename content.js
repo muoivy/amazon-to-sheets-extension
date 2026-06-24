@@ -188,6 +188,32 @@
     return match?.[1] ? match[1].replace(/\s+/g, "") : "";
   }
 
+  function getPriceFromAmazonPriceElement(priceElement) {
+    if (!priceElement) {
+      return "";
+    }
+
+    const offscreenPrice = extractPriceFromText(
+      priceElement.querySelector(".a-offscreen, .aok-offscreen")?.textContent
+    );
+
+    if (offscreenPrice) {
+      return offscreenPrice;
+    }
+
+    const symbol = cleanText(priceElement.querySelector(".a-price-symbol")?.textContent);
+    const whole = cleanText(priceElement.querySelector(".a-price-whole")?.textContent)
+      .replace(/[^\d,]/g, "");
+    const fraction = cleanText(priceElement.querySelector(".a-price-fraction")?.textContent)
+      .replace(/\D/g, "");
+
+    if (!whole) {
+      return "";
+    }
+
+    return `${symbol || "$"}${whole}${fraction ? `.${fraction}` : ""}`;
+  }
+
   function getLabeledPriceFromRoot(root, labels) {
     if (!root) {
       return "";
@@ -204,7 +230,7 @@
           continue;
         }
 
-        const closestPriceRow = el.closest(".basisPrice, .a-row, tr") || el;
+        const closestPriceRow = el.closest(".basisPrice, .a-row, tr, .a-section") || el;
         const candidateRows = [el];
 
         if (closestPriceRow !== el && root.contains(closestPriceRow)) {
@@ -218,11 +244,23 @@
             return labeledPrice;
           }
 
-          const textPrice = row.querySelector(".a-price.a-text-price .a-offscreen, .a-text-price .a-offscreen");
-          const hiddenPrice = extractPriceFromText(textPrice?.textContent);
+          const hiddenPrices = row.querySelectorAll(".a-offscreen, .aok-offscreen");
 
-          if (hiddenPrice) {
-            return hiddenPrice;
+          for (const hiddenPriceEl of hiddenPrices) {
+            const hiddenPrice = extractPriceFromText(hiddenPriceEl.textContent);
+
+            if (hiddenPrice) {
+              return hiddenPrice;
+            }
+          }
+
+          const priceElements = row.querySelectorAll(".a-price.a-text-price, .apex-basisprice-value");
+
+          for (const priceElement of priceElements) {
+            const price = getPriceFromAmazonPriceElement(priceElement);
+            if (price) {
+              return price;
+            }
           }
         }
       }
@@ -237,10 +275,11 @@
     }
 
     const priceSelectors = [
-      ".priceToPay .a-offscreen",
-      ".apexPriceToPay .a-offscreen",
-      "[data-a-color='price'] .a-offscreen",
-      ".a-price:not(.a-text-price) .a-offscreen",
+      ".a-price.aok-align-center.reinventPricePriceToPayMargin.priceToPay.apex-pricetopay-value",
+      ".priceToPay",
+      ".apexPriceToPay",
+      "[data-a-color='price']",
+      ".a-price:not(.a-text-price)",
       "#priceblock_ourprice",
       "#priceblock_dealprice",
       "#priceblock_saleprice"
@@ -250,11 +289,13 @@
       const elements = root.querySelectorAll(selector);
 
       for (const el of elements) {
-        if (el.closest(".basisPrice, .a-text-price")) {
+        if (el.closest(".basisPrice, .a-text-price, #priceUnitRufusContainer, .pricePerUnit")) {
           continue;
         }
 
-        const price = normalizePrice(el.textContent);
+        const price = el.classList?.contains("a-price")
+          ? getPriceFromAmazonPriceElement(el)
+          : normalizePrice(el.textContent);
 
         if (price && /[$€£¥₹]?\d/.test(price)) {
           return price;
