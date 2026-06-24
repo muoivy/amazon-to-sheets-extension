@@ -161,83 +161,81 @@
     return match ? match[0].replace(/\s+/g, "") : "";
   }
 
-  function getTypicalPrice() {
-    const priceRoots = document.querySelectorAll(`
-      #corePrice_feature_div,
-      #corePriceDisplay_desktop_feature_div,
-      #corePriceDisplay_mobile_feature_div,
-      #apex_desktop,
-      #centerCol,
-      #desktop_buybox,
-      #buybox
-    `);
+  function getPriceRoot() {
+    return document.querySelector(
+      "#apex_desktop #corePriceDisplay_desktop_feature_div, " +
+      "#apex_desktop #corePrice_feature_div, " +
+      "#corePriceDisplay_desktop_feature_div, " +
+      "#corePrice_feature_div"
+    );
+  }
 
-    for (const root of priceRoots) {
-      const rootText = cleanText(root.textContent);
-      const directMatch = rootText.match(/Typical\s+price\s*:?\s*([$€£¥₹]\s*\d[\d,.]*)/i);
-
-      if (directMatch && directMatch[1]) {
-        return directMatch[1].replace(/\s+/g, "");
-      }
+  function getLabeledPriceFromRoot(root, labels) {
+    if (!root) {
+      return "";
     }
 
-    const allElements = document.querySelectorAll("span, div, td, th");
+    const escapedLabels = labels.map(label => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const labelPattern = escapedLabels.join("|");
+    const pricePattern = "([$€£¥₹]\\s*\\d[\\d,.]*)";
+    const labelThenPriceRegex = new RegExp(`(?:${labelPattern})\\s*:?\\s*${pricePattern}`, "i");
+    const labelRegex = new RegExp(`(?:${labelPattern})`, "i");
+    const elements = root.querySelectorAll(".basisPrice, .a-row, .a-section, tr, span, div, td, th");
 
-    for (const el of allElements) {
+    for (const el of elements) {
       const text = cleanText(el.textContent);
 
-      if (!/Typical\s+price/i.test(text)) {
+      if (!labelRegex.test(text)) {
         continue;
       }
 
-      const directMatch = text.match(/Typical\s+price\s*:?\s*([$€£¥₹]\s*\d[\d,.]*)/i);
+      const textAfterLabel = text.replace(new RegExp(`^.*?(?:${labelPattern})`, "i"), "");
+      const labeledPriceMatch = textAfterLabel.match(new RegExp(pricePattern));
+
+      if (labeledPriceMatch && labeledPriceMatch[1]) {
+        return labeledPriceMatch[1].replace(/\s+/g, "");
+      }
+
+      const sameRowPrice = el.querySelector(".a-price.a-text-price .a-offscreen, .a-text-price .a-offscreen");
+      const price = extractPriceFromText(sameRowPrice?.textContent);
+
+      if (price) {
+        return price;
+      }
+
+      const directMatch = text.match(labelThenPriceRegex);
 
       if (directMatch && directMatch[1]) {
         return directMatch[1].replace(/\s+/g, "");
-      }
-
-      const parent = el.closest("tr, .a-section, .a-row, .basisPrice, #corePrice_feature_div, #corePriceDisplay_desktop_feature_div");
-
-      if (parent) {
-        const offscreenPrice = parent.querySelector(".a-price .a-offscreen, .a-offscreen");
-
-        if (offscreenPrice) {
-          const price = extractPriceFromText(offscreenPrice.textContent);
-
-          if (price) {
-            return price;
-          }
-        }
-
-        const price = extractPriceFromText(parent.textContent);
-
-        if (price) {
-          return price;
-        }
       }
     }
 
     return "";
   }
 
-  function getCurrentPrice() {
+  function getCurrentPriceFromRoot(root) {
+    if (!root) {
+      return "";
+    }
+
     const priceSelectors = [
-      "#corePrice_feature_div .a-price .a-offscreen",
-      "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen",
-      "#corePriceDisplay_mobile_feature_div .a-price .a-offscreen",
-      "#apex_desktop .a-price .a-offscreen",
       ".priceToPay .a-offscreen",
-      "#tp_price_block_total_price_ww .a-offscreen",
+      ".apexPriceToPay .a-offscreen",
+      "[data-a-color='price'] .a-offscreen",
+      ".a-price:not(.a-text-price) .a-offscreen",
       "#priceblock_ourprice",
       "#priceblock_dealprice",
-      "#priceblock_saleprice",
-      ".a-price .a-offscreen"
+      "#priceblock_saleprice"
     ];
 
     for (const selector of priceSelectors) {
-      const elements = document.querySelectorAll(selector);
+      const elements = root.querySelectorAll(selector);
 
       for (const el of elements) {
+        if (el.closest(".basisPrice, .a-text-price")) {
+          continue;
+        }
+
         const price = normalizePrice(el.textContent);
 
         if (price && /[$€£¥₹]?\d/.test(price)) {
@@ -246,18 +244,14 @@
       }
     }
 
-    const metaPrice = document.querySelector("meta[itemprop='price']")?.content;
-    const metaCurrency = document.querySelector("meta[itemprop='priceCurrency']")?.content;
-
-    if (metaPrice) {
-      return metaCurrency ? `${metaCurrency} ${metaPrice}` : metaPrice;
-    }
-
     return "";
   }
 
   function getPrice() {
-    return getTypicalPrice() || getCurrentPrice();
+    const root = getPriceRoot();
+
+    return getLabeledPriceFromRoot(root, ["Typical price", "Bundle Was Price"]) ||
+      getCurrentPriceFromRoot(root);
   }
 
   function normalizeSizeValue(value) {
