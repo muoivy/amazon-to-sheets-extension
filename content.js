@@ -170,43 +170,61 @@
     );
   }
 
+  function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function extractPriceAfterLabel(text, label) {
+    const clean = cleanText(text);
+
+    if (!clean) {
+      return "";
+    }
+
+    const match = clean.match(
+      new RegExp(`${escapeRegExp(label)}\\s*:?\\s*([$€£¥₹]\\s*\\d[\\d,.]*)`, "i")
+    );
+
+    return match?.[1] ? match[1].replace(/\s+/g, "") : "";
+  }
+
   function getLabeledPriceFromRoot(root, labels) {
     if (!root) {
       return "";
     }
 
-    const escapedLabels = labels.map(label => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    const labelPattern = escapedLabels.join("|");
-    const pricePattern = "([$€£¥₹]\\s*\\d[\\d,.]*)";
-    const labelThenPriceRegex = new RegExp(`(?:${labelPattern})\\s*:?\\s*${pricePattern}`, "i");
-    const labelRegex = new RegExp(`(?:${labelPattern})`, "i");
-    const elements = root.querySelectorAll(".basisPrice, .a-row, .a-section, tr, span, div, td, th");
+    for (const label of labels) {
+      const labelRegex = new RegExp(escapeRegExp(label), "i");
+      const elements = root.querySelectorAll(".basisPrice, .a-row, .a-section, tr, span, div, td, th");
 
-    for (const el of elements) {
-      const text = cleanText(el.textContent);
+      for (const el of elements) {
+        const text = cleanText(el.textContent);
 
-      if (!labelRegex.test(text)) {
-        continue;
-      }
+        if (!labelRegex.test(text)) {
+          continue;
+        }
 
-      const textAfterLabel = text.replace(new RegExp(`^.*?(?:${labelPattern})`, "i"), "");
-      const labeledPriceMatch = textAfterLabel.match(new RegExp(pricePattern));
+        const closestPriceRow = el.closest(".basisPrice, .a-row, tr") || el;
+        const candidateRows = [el];
 
-      if (labeledPriceMatch && labeledPriceMatch[1]) {
-        return labeledPriceMatch[1].replace(/\s+/g, "");
-      }
+        if (closestPriceRow !== el && root.contains(closestPriceRow)) {
+          candidateRows.push(closestPriceRow);
+        }
 
-      const sameRowPrice = el.querySelector(".a-price.a-text-price .a-offscreen, .a-text-price .a-offscreen");
-      const price = extractPriceFromText(sameRowPrice?.textContent);
+        for (const row of candidateRows) {
+          const labeledPrice = extractPriceAfterLabel(row.textContent, label);
 
-      if (price) {
-        return price;
-      }
+          if (labeledPrice) {
+            return labeledPrice;
+          }
 
-      const directMatch = text.match(labelThenPriceRegex);
+          const textPrice = row.querySelector(".a-price.a-text-price .a-offscreen, .a-text-price .a-offscreen");
+          const hiddenPrice = extractPriceFromText(textPrice?.textContent);
 
-      if (directMatch && directMatch[1]) {
-        return directMatch[1].replace(/\s+/g, "");
+          if (hiddenPrice) {
+            return hiddenPrice;
+          }
+        }
       }
     }
 
