@@ -306,11 +306,42 @@
     return "";
   }
 
+  function getPriceFromElement(el) {
+    if (!el) return "";
+    // Thử .a-offscreen trước — chứa text thuần "$3.68"
+    const offscreen = el.querySelector(".a-offscreen, .aok-offscreen");
+    const offscreenPrice = extractPriceFromText(offscreen?.textContent);
+    if (offscreenPrice) return offscreenPrice;
+    // Fallback: build từ symbol + whole + fraction khi a-offscreen rỗng/thiếu
+    return getPriceFromAmazonPriceElement(el);
+  }
+
+  function getBasisPrice(root) {
+    if (!root) return "";
+
+    // Cover các class Amazon dùng cho .basisPrice price element
+    // Thứ tự: specific nhất → rộng nhất
+    const selectors = [
+      ".basisPrice .apex-basisprice-value",   // class riêng của Amazon cho basis price
+      ".basisPrice .a-price.a-text-price",    // class chung a-text-price (giá bị gạch)
+      ".basisPrice .a-price",                 // fallback rộng nhất
+    ];
+
+    for (const selector of selectors) {
+      const el = root.querySelector(selector);
+      const price = getPriceFromElement(el);
+      if (price) return price;
+    }
+
+    return "";
+  }
+
   function getPrice() {
     const root = getPriceRoot();
 
-    return getLabeledPriceFromRoot(root, ["Typical price", "Bundle Was Price"]) ||
-      getCurrentPriceFromRoot(root);
+    // Ưu tiên: Typical price / Bundle Was Price (cùng 1 class .basisPrice)
+    // Fallback: giá thường priceToPay
+    return getBasisPrice(root) || getCurrentPriceFromRoot(root);
   }
 
   function normalizeSizeValue(value) {
