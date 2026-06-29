@@ -5,6 +5,126 @@
 
   window.__AMAZON_TO_SHEETS_CONTENT_LOADED__ = true;
 
+  const SCRAPE_ACTIONS = new Set([
+    "SCRAPE_PRODUCT",
+    "SCRAPE_AMAZON_PRODUCT"
+  ]);
+
+  const AMAZON_CONFIG = {
+    name: "Amazon",
+    hostPattern: /(^|\.)amazon\./i,
+    productUrlBase: "https://www.amazon.com/dp/",
+    urlPatterns: [
+      /\/dp\/([A-Z0-9]{10})/i,
+      /\/gp\/product\/([A-Z0-9]{10})/i,
+      /\/product\/([A-Z0-9]{10})/i
+    ],
+    asin: {
+      inputSelectors: [
+        "#ASIN",
+        "input[name='ASIN']",
+        "input[name='asin']"
+      ],
+      bodyPattern: /\bASIN\s*[:‏‎]?\s*([A-Z0-9]{10})\b/i
+    },
+    titleSelectors: [
+      "#productTitle",
+      "#title",
+      "span#productTitle"
+    ],
+    brand: {
+      selectors: [
+        "#bylineInfo",
+        "a#bylineInfo",
+        "#brand",
+        ".po-brand .po-break-word"
+      ],
+      tableRowSelectors: [
+        "#productOverview_feature_div tr",
+        "#prodDetails tr",
+        "#detailBullets_feature_div li",
+        "#productDetails_techSpec_section_1 tr",
+        "#productDetails_detailBullets_sections1 tr",
+        "table.a-normal tr"
+      ],
+      tableLabelSelectors: "th, .a-color-secondary, .a-span3",
+      tableValueSelectors: "td, .a-span9",
+      cleanupPatterns: [
+        [/^Visit the\s+/i, ""],
+        [/\s+Store$/i, ""],
+        [/^Brand\s*:\s*/i, ""],
+        [/^by\s+/i, ""]
+      ]
+    },
+    price: {
+      rootSelectors: [
+        "#apex_desktop #corePriceDisplay_desktop_feature_div",
+        "#corePriceDisplay_desktop_feature_div"
+      ],
+      referenceLabels: [
+        "Typical Price",
+        "List Price",
+        "Was Price",
+        "Bundle Was Price"
+      ],
+      referenceLabelSelectors: [
+        ".a-size-small.aok-offscreen"
+      ],
+      currentPriceLabelSelector: "#apex-pricetopay-accessibility-label",
+      currentPriceSelectors: [
+        ".priceToPay",
+        ".apexPriceToPay",
+        ".a-price:not(.a-text-price)"
+      ],
+      pricePartSelectors: {
+        hidden: ".a-offscreen, .aok-offscreen",
+        symbol: ".a-price-symbol",
+        whole: ".a-price-whole",
+        fraction: ".a-price-fraction"
+      }
+    },
+    variants: {
+      rootSelector: "#twister-plus-inline-twister",
+      fields: [
+        {
+          label: "Flavor Name",
+          selector: "#inline-twister-expanded-dimension-text-flavor_name"
+        },
+        {
+          label: "Size",
+          selector: "#inline-twister-expanded-dimension-text-size_name"
+        }
+      ]
+    },
+    image: {
+      selectors: [
+        "#landingImage",
+        "#imgTagWrapperId img",
+        "#main-image-container img",
+        "#imageBlock img",
+        "#altImages img"
+      ],
+      dynamicImageAttribute: "data-a-dynamic-image",
+      fallbackPattern: /https?:\/\/[^"']*m\.media-amazon\.com\/images\/I\/[^"']+\.(?:jpg|jpeg|png|webp)/i
+    },
+    requiredFields: [
+      ["asin", "ASIN"],
+      ["brand", "Brand"],
+      ["title", "Title"],
+      ["price", "Price"],
+      ["variants", "Variants"],
+      ["image", "Product Image"]
+    ]
+  };
+
+  const SCRAPERS = [
+    {
+      config: AMAZON_CONFIG,
+      matches: () => AMAZON_CONFIG.hostPattern.test(window.location.hostname),
+      scrape: () => scrapeAmazonProduct(AMAZON_CONFIG)
+    }
+  ];
+
   function cleanText(value) {
     return (value || "")
       .replace(/\s+/g, " ")
@@ -12,70 +132,75 @@
       .trim();
   }
 
-  function getText(selector) {
-    const el = document.querySelector(selector);
-    return el ? cleanText(el.textContent) : "";
+  function getNodeText(node) {
+    return cleanText(node?.textContent || "");
   }
 
-  function getTextFromSelectors(selectors) {
+  function getNodeHtmlOrText(node) {
+    return cleanText(node?.innerHTML || node?.textContent || "");
+  }
+
+  function queryOne(selectors, root = document) {
+    const selectorList = Array.isArray(selectors) ? selectors : [selectors];
+
+    for (const selector of selectorList) {
+      const element = root.querySelector(selector);
+
+      if (element) {
+        return element;
+      }
+    }
+
+    return null;
+  }
+
+  function queryAll(selectors, root = document) {
+    return (Array.isArray(selectors) ? selectors : [selectors])
+      .flatMap(selector => Array.from(root.querySelectorAll(selector)));
+  }
+
+  function getTextFromSelectors(selectors, root = document) {
     for (const selector of selectors) {
-      const text = getText(selector);
-      if (text) return text;
+      const text = getNodeText(root.querySelector(selector));
+
+      if (text) {
+        return text;
+      }
     }
 
     return "";
   }
 
-  function normalizePrice(price) {
-    return cleanText(price).replace(/\s+/g, "").trim();
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
-  function getProductLink(asin) {
-    if (asin) {
-      return "https://www.amazon.com/dp/" + asin;
-    }
-    // Fallback: extract ASIN from canonical or current URL
-    const canonical = document.querySelector('link[rel="canonical"]')?.href || window.location.href;
-    const match = canonical.match(/\/dp\/([A-Z0-9]{10})/i);
-    if (match) {
-      return "https://www.amazon.com/dp/" + match[1].toUpperCase();
-    }
-    return canonical;
+  function applyTextReplacements(value, replacements) {
+    return replacements.reduce(
+      (text, [pattern, replacement]) => text.replace(pattern, replacement),
+      value
+    ).trim();
   }
 
-  function getASIN() {
-    const inputSelectors = [
-      "#ASIN",
-      "input[name='ASIN']",
-      "input[name='asin']"
-    ];
-
-    for (const selector of inputSelectors) {
-      const input = document.querySelector(selector);
-      const value = input?.value?.trim();
+  function extractAsin(config) {
+    for (const selector of config.asin.inputSelectors) {
+      const value = document.querySelector(selector)?.value?.trim();
 
       if (value && /^[A-Z0-9]{10}$/i.test(value)) {
         return value.toUpperCase();
       }
     }
 
-    const bodyText = document.body.innerText || "";
-    const asinMatchFromText = bodyText.match(/\bASIN\s*[:‏‎]?\s*([A-Z0-9]{10})\b/i);
+    const bodyMatch = (document.body.innerText || "").match(config.asin.bodyPattern);
 
-    if (asinMatchFromText) {
-      return asinMatchFromText[1].toUpperCase();
+    if (bodyMatch?.[1]) {
+      return bodyMatch[1].toUpperCase();
     }
 
-    const urlPatterns = [
-      /\/dp\/([A-Z0-9]{10})/i,
-      /\/gp\/product\/([A-Z0-9]{10})/i,
-      /\/product\/([A-Z0-9]{10})/i
-    ];
-
-    for (const pattern of urlPatterns) {
+    for (const pattern of config.urlPatterns) {
       const match = window.location.href.match(pattern);
 
-      if (match) {
+      if (match?.[1]) {
         return match[1].toUpperCase();
       }
     }
@@ -83,35 +208,56 @@
     return "";
   }
 
-  function getBrandFromTable() {
-    const rows = document.querySelectorAll(`
-      #productOverview_feature_div tr,
-      #prodDetails tr,
-      #detailBullets_feature_div li,
-      #productDetails_techSpec_section_1 tr,
-      #productDetails_detailBullets_sections1 tr,
-      table.a-normal tr
-    `);
+  function getProductLink(config, asin) {
+    if (asin) {
+      return config.productUrlBase + asin;
+    }
+
+    const canonical = document.querySelector('link[rel="canonical"]')?.href || window.location.href;
+
+    for (const pattern of config.urlPatterns) {
+      const match = canonical.match(pattern);
+
+      if (match?.[1]) {
+        return config.productUrlBase + match[1].toUpperCase();
+      }
+    }
+
+    return canonical;
+  }
+
+  function getBrand(config) {
+    const directBrand = getTextFromSelectors(config.brand.selectors);
+
+    if (directBrand) {
+      return applyTextReplacements(directBrand, config.brand.cleanupPatterns);
+    }
+
+    return getBrandFromProductDetails(config);
+  }
+
+  function getBrandFromProductDetails(config) {
+    const rows = queryAll(config.brand.tableRowSelectors);
 
     for (const row of rows) {
-      const rowText = cleanText(row.textContent);
+      const rowText = getNodeText(row);
 
       if (!/brand/i.test(rowText)) {
         continue;
       }
 
-      const th = row.querySelector("th, .a-color-secondary, .a-span3");
-      const td = row.querySelector("td, .a-span9");
+      const label = getNodeText(row.querySelector(config.brand.tableLabelSelectors))
+        .replace(":", "")
+        .toLowerCase();
+      const value = getNodeText(row.querySelector(config.brand.tableValueSelectors));
 
-      const label = cleanText(th?.textContent).replace(":", "").toLowerCase();
-
-      if (label === "brand" && td) {
-        return cleanText(td.textContent);
+      if (label === "brand" && value) {
+        return value;
       }
 
       const match = rowText.match(/^Brand\s*[:‏‎]?\s*(.+)$/i);
 
-      if (match) {
+      if (match?.[1]) {
         return cleanText(match[1]);
       }
     }
@@ -119,329 +265,129 @@
     return "";
   }
 
-  function getBrand() {
-    let brand = getTextFromSelectors([
-      "#bylineInfo",
-      "a#bylineInfo",
-      "#brand",
-      ".po-brand .po-break-word"
-    ]);
+  function parsePriceAmount(text) {
+    const clean = cleanText(text);
+    const match =
+      clean.match(/[$€£¥₹]\s*(\d[\d,]*(?:\.\d+)?)/) ||
+      clean.match(/\b(\d[\d,]*(?:\.\d+)?)\s*(?:USD|EUR|GBP|JPY|CAD|AUD)\b/i) ||
+      clean.match(/\b(\d[\d,]*(?:\.\d+)?)\b/);
 
-    if (brand) {
-      brand = brand
-        .replace(/^Visit the\s+/i, "")
-        .replace(/\s+Store$/i, "")
-        .replace(/^Brand\s*:\s*/i, "")
-        .replace(/^by\s+/i, "")
-        .trim();
-
-      return brand;
+    if (!match) {
+      return null;
     }
 
-    return getBrandFromTable();
+    const amount = Number(match[1].replace(/,/g, ""));
+
+    return Number.isFinite(amount) ? amount : null;
   }
 
-  function getTitle() {
-    return getTextFromSelectors([
-      "#productTitle",
-      "#title",
-      "span#productTitle"
-    ]);
-  }
-
-  function extractPriceFromText(text) {
-    const clean = cleanText(text);
-
-    if (!clean) {
+  function formatPriceForSheets(price) {
+    if (!Number.isFinite(price)) {
       return "";
     }
 
-    const match = clean.match(/(?:[$€£¥₹]\s*\d[\d,.]*|\d[\d,.]*\s*(?:USD|EUR|GBP|JPY|CAD|AUD))/i);
-
-    return match ? match[0].replace(/\s+/g, "") : "";
+    return (Math.round(price * 100) / 100).toFixed(2);
   }
 
-  function getPriceRoot() {
-    return document.querySelector(
-      "#apex_desktop #corePriceDisplay_desktop_feature_div, " +
-      "#apex_desktop #corePrice_feature_div, " +
-      "#corePriceDisplay_desktop_feature_div, " +
-      "#corePrice_feature_div"
-    );
+  function parsePriceText(text) {
+    const amount = parsePriceAmount(text);
+
+    return amount === null ? "" : formatPriceForSheets(amount);
   }
 
-  function escapeRegExp(value) {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-
-  function extractPriceAfterLabel(text, label) {
+  function parseReferencePriceText(text, labels) {
     const clean = cleanText(text);
 
-    if (!clean) {
-      return "";
+    for (const label of labels) {
+      const labelPattern = escapeRegExp(label).replace(/\s+/g, "\\s+");
+      const match = clean.match(
+        new RegExp(`${labelPattern}\\s*:?\\s*[$€£¥₹]\\s*(\\d[\\d,]*(?:\\.\\d+)?)`, "i")
+      );
+
+      if (match?.[1]) {
+        return parsePriceText(match[1]);
+      }
     }
 
-    const match = clean.match(
-      new RegExp(`${escapeRegExp(label)}\\s*:?\\s*([$€£¥₹]\\s*\\d[\\d,.]*)`, "i")
-    );
-
-    return match?.[1] ? match[1].replace(/\s+/g, "") : "";
+    return "";
   }
 
-  function getPriceFromAmazonPriceElement(priceElement) {
+  function getPriceFromPriceElement(priceElement, selectors) {
     if (!priceElement) {
       return "";
     }
 
-    const offscreenPrice = extractPriceFromText(
-      priceElement.querySelector(".a-offscreen, .aok-offscreen")?.textContent
+    const hiddenPrice = parsePriceText(
+      priceElement.querySelector(selectors.hidden)?.textContent
     );
 
-    if (offscreenPrice) {
-      return offscreenPrice;
+    if (hiddenPrice) {
+      return hiddenPrice;
     }
 
-    const symbol = cleanText(priceElement.querySelector(".a-price-symbol")?.textContent);
-    const whole = cleanText(priceElement.querySelector(".a-price-whole")?.textContent)
+    const symbol = getNodeText(priceElement.querySelector(selectors.symbol));
+    const whole = getNodeText(priceElement.querySelector(selectors.whole))
       .replace(/[^\d,]/g, "");
-    const fraction = cleanText(priceElement.querySelector(".a-price-fraction")?.textContent)
+    const fraction = getNodeText(priceElement.querySelector(selectors.fraction))
       .replace(/\D/g, "");
 
     if (!whole) {
       return "";
     }
 
-    return `${symbol || "$"}${whole}${fraction ? `.${fraction}` : ""}`;
+    return parsePriceText(`${symbol || "$"}${whole}${fraction ? `.${fraction}` : ""}`);
   }
 
-  function getLabeledPriceFromRoot(root, labels) {
-    if (!root) {
+  function getPrice(config) {
+    const priceRoot = queryOne(config.price.rootSelectors);
+
+    if (!priceRoot) {
       return "";
     }
 
-    for (const label of labels) {
-      const labelRegex = new RegExp(escapeRegExp(label), "i");
-      const elements = root.querySelectorAll(".basisPrice, .a-row, .a-section, tr, span, div, td, th");
+    return getReferencePrice(config, priceRoot) || getCurrentPrice(config, priceRoot);
+  }
 
-      for (const el of elements) {
-        const text = cleanText(el.textContent);
+  function getReferencePrice(config, priceRoot) {
+    const labels = config.price.referenceLabels;
+    const offscreenLabels = queryAll(config.price.referenceLabelSelectors, priceRoot);
 
-        if (!labelRegex.test(text)) {
-          continue;
-        }
+    for (const labelElement of offscreenLabels) {
+      const price = parseReferencePriceText(getNodeHtmlOrText(labelElement), labels);
 
-        const closestPriceRow = el.closest(".basisPrice, .a-row, tr, .a-section") || el;
-        const candidateRows = [el];
-
-        if (closestPriceRow !== el && root.contains(closestPriceRow)) {
-          candidateRows.push(closestPriceRow);
-        }
-
-        for (const row of candidateRows) {
-          const labeledPrice = extractPriceAfterLabel(row.textContent, label);
-
-          if (labeledPrice) {
-            return labeledPrice;
-          }
-
-          const hiddenPrices = row.querySelectorAll(".a-offscreen, .aok-offscreen");
-
-          for (const hiddenPriceEl of hiddenPrices) {
-            const hiddenPrice = extractPriceFromText(hiddenPriceEl.textContent);
-
-            if (hiddenPrice) {
-              return hiddenPrice;
-            }
-          }
-
-          const priceElements = row.querySelectorAll(".a-price.a-text-price, .apex-basisprice-value");
-
-          for (const priceElement of priceElements) {
-            const price = getPriceFromAmazonPriceElement(priceElement);
-            if (price) {
-              return price;
-            }
-          }
-        }
+      if (price) {
+        return price;
       }
     }
 
-    return "";
+    return parseReferencePriceText(getNodeHtmlOrText(priceRoot), labels);
   }
 
-  function getCurrentPriceFromRoot(root) {
-    if (!root) {
-      return "";
+  function getCurrentPrice(config, priceRoot) {
+    const currentPriceLabel = priceRoot.querySelector(config.price.currentPriceLabelSelector);
+
+    if (currentPriceLabel) {
+      return parsePriceText(getNodeHtmlOrText(currentPriceLabel));
     }
 
-    const priceSelectors = [
-      ".a-price.aok-align-center.reinventPricePriceToPayMargin.priceToPay.apex-pricetopay-value",
-      ".priceToPay",
-      ".apexPriceToPay",
-      "[data-a-color='price']",
-      ".a-price:not(.a-text-price)",
-      "#priceblock_ourprice",
-      "#priceblock_dealprice",
-      "#priceblock_saleprice"
-    ];
+    const priceElement = queryOne(config.price.currentPriceSelectors, priceRoot);
 
-    for (const selector of priceSelectors) {
-      const elements = root.querySelectorAll(selector);
-
-      for (const el of elements) {
-        if (el.closest(".basisPrice, .a-text-price, #priceUnitRufusContainer, .pricePerUnit")) {
-          continue;
-        }
-
-        const price = el.classList?.contains("a-price")
-          ? getPriceFromAmazonPriceElement(el)
-          : normalizePrice(el.textContent);
-
-        if (price && /[$€£¥₹]?\d/.test(price)) {
-          return price;
-        }
-      }
-    }
-
-    return "";
+    return getPriceFromPriceElement(priceElement, config.price.pricePartSelectors);
   }
 
-  function getPriceFromElement(el) {
-    if (!el) return "";
-    // Thử .a-offscreen trước — chứa text thuần "$3.68"
-    const offscreen = el.querySelector(".a-offscreen, .aok-offscreen");
-    const offscreenPrice = extractPriceFromText(offscreen?.textContent);
-    if (offscreenPrice) return offscreenPrice;
-    // Fallback: build từ symbol + whole + fraction khi a-offscreen rỗng/thiếu
-    return getPriceFromAmazonPriceElement(el);
-  }
+  function getVariants(config) {
+    const root = document.querySelector(config.variants.rootSelector) || document;
+    const variants = [];
 
-  function getBasisPrice(root) {
-    if (!root) return "";
-
-    // Cover các class Amazon dùng cho .basisPrice price element
-    // Thứ tự: specific nhất → rộng nhất
-    const selectors = [
-      ".basisPrice .apex-basisprice-value",   // class riêng của Amazon cho basis price
-      ".basisPrice .a-price.a-text-price",    // class chung a-text-price (giá bị gạch)
-      ".basisPrice .a-price",                 // fallback rộng nhất
-    ];
-
-    for (const selector of selectors) {
-      const el = root.querySelector(selector);
-      const price = getPriceFromElement(el);
-      if (price) return price;
-    }
-
-    return "";
-  }
-
-  function getPrice() {
-    const root = getPriceRoot();
-
-    // Ưu tiên: Typical price / Bundle Was Price (cùng 1 class .basisPrice)
-    // Fallback: giá thường priceToPay
-    return getBasisPrice(root) || getCurrentPriceFromRoot(root);
-  }
-
-  function normalizeSizeValue(value) {
-    return cleanText(value)
-      .replace(/^selected\s+/i, "")
-      .replace(/^currently selected\s+/i, "")
-      .replace(/^size\s*:\s*/i, "")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
-  function getVariants() {
-    const sizeContainerSelectors = [
-      "#variation_size_name",
-      "#variation_size",
-      "#variation_count",
-      "#variation_item_package_quantity",
-      "#variation_number_of_items"
-    ];
-
-    for (const selector of sizeContainerSelectors) {
-      const container = document.querySelector(selector);
-
-      if (!container) continue;
-
-      let value = cleanText(container.querySelector(".selection")?.textContent);
-
-      const inlineText = container.querySelector("[id^='inline-twister-expanded-dimension-text']");
-      if (!value && inlineText) {
-        value = cleanText(inlineText.textContent);
-      }
-
-      const select = container.querySelector("select");
-      if (!value && select) {
-        value = cleanText(select.options[select.selectedIndex]?.textContent);
-      }
-
-      const selectedOption = container.querySelector(`
-        .swatchSelect,
-        .selected,
-        li[aria-checked='true'],
-        button[aria-pressed='true'],
-        .a-button-selected
-      `);
-
-      if (!value && selectedOption) {
-        value = cleanText(
-          selectedOption.getAttribute("title") ||
-          selectedOption.getAttribute("aria-label") ||
-          selectedOption.textContent
-        );
-      }
-
-      value = normalizeSizeValue(value);
+    for (const field of config.variants.fields) {
+      const value = getNodeText(root.querySelector(field.selector));
 
       if (value) {
-        return value;
+        variants.push(`${field.label}: ${value}`);
       }
     }
 
-    const inlineSizeSelectors = [
-      "#inline-twister-expanded-dimension-text-size_name",
-      "#inline-twister-expanded-dimension-text-size",
-      "#inline-twister-expanded-dimension-text-count",
-      "#inline-twister-expanded-dimension-text-item_package_quantity",
-      "#inline-twister-expanded-dimension-text-number_of_items"
-    ];
-
-    for (const selector of inlineSizeSelectors) {
-      const el = document.querySelector(selector);
-      const value = normalizeSizeValue(el?.textContent);
-
-      if (value) {
-        return value;
-      }
-    }
-
-    const twisterRoot = document.querySelector("#twister, #twister_feature_div, #centerCol");
-
-    if (twisterRoot) {
-      const text = cleanText(twisterRoot.textContent);
-      const sizeMatch = text.match(/\bSize\s*:\s*([^|]+?)(?=\s*(Style|Color|Colour|Flavor|Flavour|Scent|Pattern|Pack|$))/i);
-
-      if (sizeMatch && sizeMatch[1]) {
-        return normalizeSizeValue(sizeMatch[1]);
-      }
-
-      const elements = twisterRoot.querySelectorAll("span, div, label");
-
-      for (const el of elements) {
-        const line = cleanText(el.textContent);
-        const match = line.match(/^Size\s*:\s*(.+)$/i);
-
-        if (match && match[1]) {
-          return normalizeSizeValue(match[1]);
-        }
-      }
-    }
-
-    return "";
+    return variants.join("\n");
   }
 
   function isValidImageUrl(url) {
@@ -481,68 +427,51 @@
     }
   }
 
-  function getProductImage() {
-    const imageSelectors = [
-      "#landingImage",
-      "#imgTagWrapperId img",
-      "#main-image-container img",
-      "#imageBlock img",
-      "#altImages img"
-    ];
+  function getProductImage(config) {
+    for (const selector of config.image.selectors) {
+      const image = document.querySelector(selector);
 
-    for (const selector of imageSelectors) {
-      const img = document.querySelector(selector);
-
-      if (!img) {
+      if (!image) {
         continue;
       }
 
       const dynamicImage = getLargestImageFromDynamicImage(
-        img.getAttribute("data-a-dynamic-image")
+        image.getAttribute(config.image.dynamicImageAttribute)
       );
-
       const imageUrl =
-        img.getAttribute("data-old-hires") ||
+        image.getAttribute("data-old-hires") ||
         dynamicImage ||
-        img.currentSrc ||
-        img.src ||
-        img.getAttribute("data-src");
+        image.currentSrc ||
+        image.src ||
+        image.getAttribute("data-src");
 
       if (isValidImageUrl(imageUrl)) {
         return imageUrl;
       }
     }
 
-    const html = document.documentElement.innerHTML;
-    const match = html.match(/https?:\/\/[^"']*m\.media-amazon\.com\/images\/I\/[^"']+\.(?:jpg|jpeg|png|webp)/i);
+    const match = document.documentElement.innerHTML.match(config.image.fallbackPattern);
 
-    if (match && match[0]) {
-      return match[0].replace(/\\u002F/g, "/");
-    }
-
-    return "";
+    return match?.[0] ? match[0].replace(/\\u002F/g, "/") : "";
   }
 
-  function scrapeAmazonProduct() {
-    const asin = getASIN();
+  function buildWarnings(data, config) {
+    return config.requiredFields
+      .filter(([field]) => !data[field])
+      .map(([, label]) => label);
+  }
+
+  function scrapeAmazonProduct(config) {
+    const asin = extractAsin(config);
     const data = {
-      link: getProductLink(asin),
-      asin: asin,
-      brand: getBrand(),
-      title: getTitle(),
-      price: getPrice(),
-      variants: getVariants(),
-      image: getProductImage()
+      link: getProductLink(config, asin),
+      asin,
+      brand: getBrand(config),
+      title: getTextFromSelectors(config.titleSelectors),
+      price: getPrice(config),
+      variants: getVariants(config),
+      image: getProductImage(config)
     };
-
-    const warnings = [];
-
-    if (!data.asin) warnings.push("ASIN");
-    if (!data.brand) warnings.push("Brand");
-    if (!data.title) warnings.push("Title");
-    if (!data.price) warnings.push("Price");
-    if (!data.variants) warnings.push("Size");
-    if (!data.image) warnings.push("Product Image");
 
     if (!data.asin && !data.title) {
       return {
@@ -554,22 +483,35 @@
     return {
       ok: true,
       data,
-      warnings
+      warnings: buildWarnings(data, config)
     };
   }
 
+  function getScraperForCurrentPage() {
+    return SCRAPERS.find(scraper => scraper.matches());
+  }
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action !== "SCRAPE_AMAZON_PRODUCT") {
+    if (!SCRAPE_ACTIONS.has(message.action)) {
       return;
     }
 
     try {
-      const result = scrapeAmazonProduct();
-      sendResponse(result);
+      const scraper = getScraperForCurrentPage();
+
+      if (!scraper) {
+        sendResponse({
+          ok: false,
+          error: "Trang hiện tại chưa được extension hỗ trợ."
+        });
+        return true;
+      }
+
+      sendResponse(scraper.scrape());
     } catch (error) {
       sendResponse({
         ok: false,
-        error: error.message || "Lỗi không xác định khi scrape dữ liệu Amazon."
+        error: error.message || "Lỗi không xác định khi scrape dữ liệu sản phẩm."
       });
     }
 
