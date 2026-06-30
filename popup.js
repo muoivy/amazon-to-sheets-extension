@@ -1,6 +1,18 @@
 const getProductBtn = document.getElementById("getProductBtn");
 const statusBox = document.getElementById("status");
 
+const CONTENT_SCRIPT_FILES = [
+  "scrapers/shared.js",
+  "scrapers/amazon.js",
+  "scrapers/instacart.js",
+  "content.js"
+];
+
+const SUPPORTED_HOSTS = [
+  /(^|\.)amazon\./i,
+  /(^|\.)instacart\.com$/i
+];
+
 function setStatus(message, type = "") {
   statusBox.textContent = message;
   statusBox.className = type;
@@ -15,22 +27,29 @@ async function getActiveTab() {
   return tabs[0];
 }
 
-// Gửi message sang content.js.
-// Nếu content.js chưa được inject vì tab đã mở trước khi cài extension,
-// ta inject lại content.js bằng chrome.scripting.
+function isSupportedProductUrl(url) {
+  try {
+    const parsedUrl = new URL(url);
+
+    return SUPPORTED_HOSTS.some(pattern => pattern.test(parsedUrl.hostname));
+  } catch (error) {
+    return false;
+  }
+}
+
 async function scrapeCurrentTab(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: CONTENT_SCRIPT_FILES
+  });
+
   try {
     return await chrome.tabs.sendMessage(tabId, {
-      action: "SCRAPE_AMAZON_PRODUCT"
+      action: "SCRAPE_PRODUCT"
     });
   } catch (error) {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["content.js"]
-    });
-
     return await chrome.tabs.sendMessage(tabId, {
-      action: "SCRAPE_AMAZON_PRODUCT"
+      action: "SCRAPE_PRODUCT"
     });
   }
 }
@@ -46,8 +65,8 @@ getProductBtn.addEventListener("click", async () => {
       throw new Error("Không tìm thấy tab hiện tại.");
     }
 
-    if (!tab.url || !tab.url.includes("amazon.")) {
-      throw new Error("Vui lòng mở trang chi tiết sản phẩm Amazon trước khi bấm Get Product.");
+    if (!tab.url || !isSupportedProductUrl(tab.url)) {
+      throw new Error("Vui lòng mở trang chi tiết sản phẩm Amazon hoặc Instacart trước khi bấm Get Product.");
     }
 
     const scrapeResult = await scrapeCurrentTab(tab.id);
@@ -68,19 +87,19 @@ getProductBtn.addEventListener("click", async () => {
     }
 
     let message = sendResult.action === "updated"
-      ? "🔄 Đã cập nhật sản phẩm trong Google Sheets."
-      : "✅ Đã thêm sản phẩm mới vào Google Sheets.";
+      ? "Đã cập nhật sản phẩm trong Google Sheets."
+      : "Đã thêm sản phẩm mới vào Google Sheets.";
 
     if (scrapeResult.warnings && scrapeResult.warnings.length > 0) {
-      message += "\n\n⚠️ Thiếu dữ liệu: " + scrapeResult.warnings.join(", ");
+      message += "\n\nThiếu dữ liệu: " + scrapeResult.warnings.join(", ");
     }
 
-    message += `\n\nASIN/SKU: ${productData.asin || "N/A"}`;
-    message += `\nTitle: ${productData.title || "N/A"}`;
+    message += `\n\nSource: ${productData.source || "N/A"}`;
+    message += `\nSKU: ${productData.sku || productData.asin || "N/A"}`;
 
     setStatus(message, "success");
   } catch (error) {
-    setStatus("❌ " + error.message, "error");
+    setStatus(error.message, "error");
   } finally {
     getProductBtn.disabled = false;
   }

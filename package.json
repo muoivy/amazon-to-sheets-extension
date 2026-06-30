@@ -1,8 +1,8 @@
 {
-  "name": "amazon-to-sheets-extension",
+  "name": "product-to-sheets-extension",
   "version": "1.0.0",
   "private": true,
-  "description": "Chrome Extension MV3 scrape Amazon product data and send to Google Sheets via Google Apps Script.",
+  "description": "Chrome Extension MV3 scrape supported retailer product data and send to Google Sheets via Google Apps Script.",
   "scripts": {
     "build:config": "node scripts/build-config.js"
   }

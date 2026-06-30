@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Amazon Product To Google Sheets",
+  "name": "Product To Google Sheets",
   "version": "1.0.0",
-  "description": "Scrape Amazon product data and send it to Google Sheets via Google Apps Script.",
+  "description": "Scrape supported retailer product data and send it to Google Sheets via Google Apps Script.",
   "permissions": [
     "activeTab",
     "tabs",
@@ -10,11 +10,12 @@
   ],
   "host_permissions": [
     "*://*.amazon.com/*",
+    "*://*.instacart.com/*",
     "https://script.google.com/*",
     "https://script.googleusercontent.com/*"
   ],
   "action": {
-    "default_title": "Amazon Product",
+    "default_title": "Product To Sheets",
     "default_popup": "popup.html"
   },
   "background": {
@@ -23,9 +24,13 @@
   "content_scripts": [
     {
       "matches": [
-        "*://*.amazon.com/*"
+        "*://*.amazon.com/*",
+        "*://*.instacart.com/*"
       ],
       "js": [
+        "scrapers/shared.js",
+        "scrapers/amazon.js",
+        "scrapers/instacart.js",
         "content.js"
       ],
       "run_at": "document_idle"

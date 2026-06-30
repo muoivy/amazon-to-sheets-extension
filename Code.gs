@@ -1,49 +1,59 @@
 /**
  * Google Apps Script standalone project.
  *
- * Dùng cho trường hợp Apps Script tạo riêng tại:
+ * Dung cho Apps Script project tao rieng tai:
  * https://script.google.com/home
- *
- * Không dùng SpreadsheetApp.getActiveSpreadsheet()
- * mà dùng SpreadsheetApp.openById(SPREADSHEET_ID)
  */
 
-// Dán Spreadsheet ID của file Google Sheets vào đây.
-// Ví dụ URL sheet:
+// Dan Spreadsheet ID cua file Google Sheets vao day.
+// Vi du URL sheet:
 // https://docs.google.com/spreadsheets/d/1AbcDEFxxxxxxxxxxxx/edit
-// thì Spreadsheet ID là phần: 1AbcDEFxxxxxxxxxxxx
+// thi Spreadsheet ID la phan: 1AbcDEFxxxxxxxxxxxx
 const SPREADSHEET_ID = "PASTE_YOUR_SPREADSHEET_ID_HERE";
 
-// Tên tab sheet bên dưới Google Sheets.
-// Phải khớp chính xác chữ hoa/thường và khoảng trắng.
+// Ten tab sheet ben duoi Google Sheets.
+// Phai khop chinh xac chu hoa/thuong va khoang trang.
 const SHEET_NAME = "Listing Product";
 
 const HEADER_ROW = 1;
 const DATA_START_ROW = 2;
 
 /**
- * FORMULA = hiển thị ảnh trực tiếp trong ô bằng =IMAGE("url")
- * URL     = chỉ lưu URL ảnh dạng text
+ * FORMULA = hien thi anh truc tiep trong o bang =IMAGE("url")
+ * URL     = chi luu URL anh dang text
  */
 const PRODUCT_IMAGE_MODE = "FORMULA";
 
 /**
- * Mapping field từ Extension sang tên cột trong Google Sheets.
+ * Mapping field tu Extension sang ten cot trong Google Sheets.
  *
- * Có thể đổi thứ tự cột thoải mái.
- * Nếu đổi tên header, thêm tên mới vào alias tương ứng.
+ * Co the doi thu tu cot thoai mai.
+ * Neu doi ten header, them ten moi vao alias tuong ung.
  */
 const HEADER_ALIASES = {
+  source: [
+    "Source",
+    "Marketplace",
+    "Retailer",
+    "Platform",
+    "Store",
+    "Amazon",
+    "Instacart",
+    "Amazon/Instacart",
+    "Amazon Instacart"
+  ],
+
   link: [
     "Product Link",
     "Link",
-    "URL",
-    "Amazon Link"
+    "URL"
   ],
 
-  asin: [
+  sku: [
     "SKU",
-    "ASIN"
+    "ASIN",
+    "Product ID",
+    "Instacart Product ID"
   ],
 
   brand: [
@@ -77,7 +87,7 @@ const HEADER_ALIASES = {
 function doGet() {
   return jsonResponse({
     ok: true,
-    message: "Amazon to Google Sheets Web App is running.",
+    message: "Product to Google Sheets Web App is running.",
     spreadsheetId: SPREADSHEET_ID,
     sheetName: SHEET_NAME
   });
@@ -94,46 +104,47 @@ function doPost(e) {
     }
 
     if (!SPREADSHEET_ID || SPREADSHEET_ID === "PASTE_YOUR_SPREADSHEET_ID_HERE") {
-      throw new Error("Bạn chưa cấu hình SPREADSHEET_ID trong Code.gs.");
+      throw new Error("Ban chua cau hinh SPREADSHEET_ID trong Code.gs.");
     }
 
     const data = JSON.parse(e.postData.contents);
 
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sheet = getTargetSheet(ss);
-
     const headerMap = getHeaderMap(sheet);
 
+    const incomingLink = data.link || "";
     const valuesToWrite = {
-      link: data.link || "",
-      asin: data.asin || "",
+      source: data.source || inferSourceFromLink(incomingLink),
+      link: incomingLink,
+      sku: data.sku || data.asin || "",
       brand: data.brand || "",
       variants: data.variants || "",
       price: data.price || "",
       image: data.image || ""
     };
 
-    // Tìm row đã có SKU/ASIN trùng, sau đó fallback theo ASIN trong Product Link.
-    const linkColumnIndex = findColumnIndexByAliases(headerMap, HEADER_ALIASES["link"]);
-    const asinColumnIndex = findColumnIndexByAliases(headerMap, HEADER_ALIASES["asin"]);
+    const linkColumnIndex = findColumnIndexByAliases(headerMap, HEADER_ALIASES.link);
+    const skuColumnIndex = findColumnIndexByAliases(headerMap, HEADER_ALIASES.sku);
     let targetRow = null;
     let isUpdate = false;
 
-    if (asinColumnIndex && valuesToWrite.asin) {
-      targetRow = findRowByAsin(sheet, asinColumnIndex, valuesToWrite.asin);
-      if (targetRow) {
-        isUpdate = true;
-      }
-    }
-
+    // Product Link la cot link chung cho ca Amazon va Instacart.
+    // Uu tien tim theo link truoc de khop dung dong user da dan san.
     if (linkColumnIndex && valuesToWrite.link) {
-      targetRow = targetRow || findRowByLink(sheet, linkColumnIndex, valuesToWrite.link);
+      targetRow = findRowByLink(sheet, linkColumnIndex, valuesToWrite.link);
       if (targetRow) {
         isUpdate = true;
       }
     }
 
-    // Nếu không tìm thấy row trùng → append dòng mới
+    if (skuColumnIndex && valuesToWrite.sku) {
+      targetRow = targetRow || findRowBySku(sheet, skuColumnIndex, valuesToWrite.sku);
+      if (targetRow) {
+        isUpdate = true;
+      }
+    }
+
     if (!targetRow) {
       targetRow = findFirstEmptyRow(sheet);
     }
@@ -144,16 +155,15 @@ function doPost(e) {
       const columnIndex = findColumnIndexByAliases(headerMap, HEADER_ALIASES[field]);
 
       if (!columnIndex) {
-        // Chỉ báo lỗi với các field bắt buộc (bỏ qua field không có cột tương ứng)
-        if (["link", "asin"].includes(field)) {
+        if (["link", "sku"].includes(field)) {
           missingHeaders.push(field);
         }
         return;
       }
 
-      // Khi update: giữ Product Link cũ nếu ô này đã có dữ liệu.
+      // Khi update: giu Product Link cu neu o nay da co du lieu.
       if (isUpdate && field === "link") {
-        const currentLink = String(sheet.getRange(targetRow, columnIndex).getDisplayValue() || "").trim();
+        const currentLink = getCellLinkValue(sheet.getRange(targetRow, columnIndex));
 
         if (currentLink) {
           return;
@@ -165,16 +175,16 @@ function doPost(e) {
 
     if (missingHeaders.length > 0) {
       throw new Error(
-        "Không tìm thấy header cho field bắt buộc: " + missingHeaders.join(", ") +
-        ". Hãy kiểm tra hàng 1 hoặc thêm alias trong HEADER_ALIASES."
+        "Khong tim thay header cho field bat buoc: " + missingHeaders.join(", ") +
+        ". Hay kiem tra hang 1 hoac them alias trong HEADER_ALIASES."
       );
     }
 
     return jsonResponse({
       ok: true,
       message: isUpdate
-        ? "Đã cập nhật sản phẩm trong Google Sheets (row " + targetRow + ")."
-        : "Đã thêm sản phẩm mới vào Google Sheets (row " + targetRow + ").",
+        ? "Da cap nhat san pham trong Google Sheets (row " + targetRow + ")."
+        : "Da them san pham moi vao Google Sheets (row " + targetRow + ").",
       row: targetRow,
       action: isUpdate ? "updated" : "inserted"
     });
@@ -218,8 +228,8 @@ function getTargetSheet(ss) {
 
   if (!sheet) {
     throw new Error(
-      "Không tìm thấy tab sheet tên '" + SHEET_NAME + "'. " +
-      "Hãy đổi tên tab sheet hoặc sửa SHEET_NAME trong Code.gs."
+      "Khong tim thay tab sheet ten '" + SHEET_NAME + "'. " +
+      "Hay doi ten tab sheet hoac sua SHEET_NAME trong Code.gs."
     );
   }
 
@@ -237,7 +247,7 @@ function getHeaderMap(sheet) {
   const lastColumn = sheet.getLastColumn();
 
   if (lastColumn < 1) {
-    throw new Error("Sheet chưa có header ở hàng 1.");
+    throw new Error("Sheet chua co header o hang 1.");
   }
 
   const headers = sheet
@@ -269,13 +279,27 @@ function findColumnIndexByAliases(headerMap, aliases) {
   return null;
 }
 
-function normalizeAsin(value) {
-  const clean = String(value || "").trim().toUpperCase();
-
-  return /^[A-Z0-9]{10}$/.test(clean) ? clean : "";
+function normalizeSku(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
 }
 
-function extractAsinFromLink(value) {
+function inferSourceFromLink(value) {
+  const text = String(value || "").trim();
+
+  if (/amazon\./i.test(text)) {
+    return "Amazon";
+  }
+
+  if (/instacart\.com/i.test(text)) {
+    return "Instacart";
+  }
+
+  return "";
+}
+
+function extractSkuFromLink(value) {
   const text = String(value || "").trim();
 
   if (!text) {
@@ -286,28 +310,132 @@ function extractAsinFromLink(value) {
     /\/dp\/([A-Z0-9]{10})(?:[/?#&]|$)/i,
     /\/gp\/product\/([A-Z0-9]{10})(?:[/?#&]|$)/i,
     /\/product\/([A-Z0-9]{10})(?:[/?#&]|$)/i,
-    /[?&]asin=([A-Z0-9]{10})(?:[&#]|$)/i
+    /[?&]asin=([A-Z0-9]{10})(?:[&#]|$)/i,
+    /\/products\/(\d+)(?:-|\/|[?#]|$)/i,
+    /[?&]product_id=(\d+)(?:[&#]|$)/i
   ];
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
 
     if (match && match[1]) {
-      return match[1].toUpperCase();
+      return normalizeSku(match[1]);
     }
   }
 
-  return normalizeAsin(text);
+  return normalizeSku(text);
 }
 
-function findRowByAsin(sheet, asinColumnIndex, asinToFind) {
+function normalizeProductLinkForCompare(value) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return "";
+  }
+
+  try {
+    const url = new URL(text);
+    const sku = extractSkuFromLink(url.href);
+
+    if (/amazon\./i.test(url.hostname) && sku) {
+      return "amazon:" + sku;
+    }
+
+    if (/instacart\.com$/i.test(url.hostname) && sku) {
+      const retailerSlug = url.searchParams.get("retailerSlug") || "";
+      return "instacart:" + sku + ":" + retailerSlug.toLowerCase();
+    }
+
+    url.hash = "";
+    url.protocol = url.protocol.toLowerCase();
+    url.hostname = url.hostname.toLowerCase();
+
+    if (url.pathname.length > 1) {
+      url.pathname = url.pathname.replace(/\/+$/, "");
+    }
+
+    [
+      "ref",
+      "tag",
+      "psc",
+      "qid",
+      "sr",
+      "sprefix",
+      "crid",
+      "keywords",
+      "th",
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "utm_term",
+      "utm_content"
+    ].forEach(param => url.searchParams.delete(param));
+
+    return url.href.toLowerCase();
+  } catch (error) {
+    return text.toLowerCase();
+  }
+}
+
+function getCellLinkValue(range) {
+  const displayValue = String(range.getDisplayValue() || "").trim();
+
+  if (/^https?:\/\//i.test(displayValue)) {
+    return displayValue;
+  }
+
+  const formula = String(range.getFormula() || "").trim();
+  const formulaMatch = formula.match(/HYPERLINK\(\s*"([^"]+)"/i);
+
+  if (formulaMatch && formulaMatch[1]) {
+    return formulaMatch[1];
+  }
+
+  try {
+    const richTextValue = range.getRichTextValue();
+    const linkUrl = richTextValue && richTextValue.getLinkUrl();
+
+    if (linkUrl) {
+      return linkUrl;
+    }
+  } catch (error) {
+    // Ignore rich text read errors.
+  }
+
+  return displayValue;
+}
+
+function getColumnLinkValues(sheet, columnIndex, numberOfRows) {
+  const range = sheet.getRange(DATA_START_ROW, columnIndex, numberOfRows, 1);
+  const displayValues = range.getDisplayValues();
+  const formulas = range.getFormulas();
+  let richTextValues = [];
+
+  try {
+    richTextValues = range.getRichTextValues();
+  } catch (error) {
+    richTextValues = [];
+  }
+
+  return displayValues.map((row, index) => {
+    const displayValue = String(row[0] || "").trim();
+    const formula = String((formulas[index] && formulas[index][0]) || "").trim();
+    const formulaMatch = formula.match(/HYPERLINK\(\s*"([^"]+)"/i);
+    const richTextValue = richTextValues[index] && richTextValues[index][0];
+    const richTextLink = richTextValue && richTextValue.getLinkUrl && richTextValue.getLinkUrl();
+
+    return richTextLink || (formulaMatch && formulaMatch[1]) || displayValue;
+  });
+}
+
+function findRowBySku(sheet, skuColumnIndex, skuToFind) {
   const lastRow = sheet.getLastRow();
 
   if (lastRow < DATA_START_ROW) {
     return null;
   }
 
-  const normalizedTarget = normalizeAsin(asinToFind);
+  const normalizedTarget = normalizeSku(skuToFind);
 
   if (!normalizedTarget) {
     return null;
@@ -315,13 +443,13 @@ function findRowByAsin(sheet, asinColumnIndex, asinToFind) {
 
   const numberOfRows = lastRow - DATA_START_ROW + 1;
   const values = sheet
-    .getRange(DATA_START_ROW, asinColumnIndex, numberOfRows, 1)
+    .getRange(DATA_START_ROW, skuColumnIndex, numberOfRows, 1)
     .getDisplayValues();
 
   for (let i = 0; i < values.length; i++) {
-    const cellAsin = normalizeAsin(values[i][0]);
+    const cellSku = normalizeSku(values[i][0]);
 
-    if (cellAsin && cellAsin === normalizedTarget) {
+    if (cellSku && cellSku === normalizedTarget) {
       return DATA_START_ROW + i;
     }
   }
@@ -337,20 +465,24 @@ function findRowByLink(sheet, linkColumnIndex, linkToFind) {
   }
 
   const numberOfRows = lastRow - DATA_START_ROW + 1;
-  const values = sheet
-    .getRange(DATA_START_ROW, linkColumnIndex, numberOfRows, 1)
-    .getDisplayValues();
-
-  const normalizedTarget = String(linkToFind).trim().toLowerCase();
-  const targetAsin = extractAsinFromLink(linkToFind);
+  const values = getColumnLinkValues(sheet, linkColumnIndex, numberOfRows);
+  const normalizedTarget = normalizeProductLinkForCompare(linkToFind);
+  const targetSku = extractSkuFromLink(linkToFind);
+  const targetSource = inferSourceFromLink(linkToFind);
 
   for (let i = 0; i < values.length; i++) {
-    const cellValue = String(values[i][0] || "").trim().toLowerCase();
-    if (cellValue && cellValue === normalizedTarget) {
+    const cellValue = String(values[i] || "").trim();
+    const normalizedCellValue = normalizeProductLinkForCompare(cellValue);
+
+    if (cellValue && normalizedCellValue && normalizedCellValue === normalizedTarget) {
       return DATA_START_ROW + i;
     }
 
-    if (targetAsin && extractAsinFromLink(cellValue) === targetAsin) {
+    if (
+      targetSku &&
+      extractSkuFromLink(cellValue) === targetSku &&
+      inferSourceFromLink(cellValue) === targetSource
+    ) {
       return DATA_START_ROW + i;
     }
   }
@@ -359,15 +491,13 @@ function findRowByLink(sheet, linkColumnIndex, linkToFind) {
 }
 
 /**
- * Tìm dòng trống đầu tiên từ hàng 2 trở xuống.
- * Nếu một dòng có text ở bất kỳ ô nào thì bỏ qua dòng đó.
+ * Tim dong trong dau tien tu hang 2 tro xuong.
+ * Neu mot dong co text o bat ky o nao thi bo qua dong do.
  */
 function findFirstEmptyRow(sheet) {
   const lastRow = Math.max(sheet.getLastRow(), DATA_START_ROW);
   const lastColumn = Math.max(sheet.getLastColumn(), 1);
-
   const numberOfRows = Math.max(lastRow - DATA_START_ROW + 1, 1);
-
   const values = sheet
     .getRange(DATA_START_ROW, 1, numberOfRows, lastColumn)
     .getDisplayValues();

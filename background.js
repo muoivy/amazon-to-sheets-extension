@@ -64,11 +64,13 @@ async function sendProductToSheets(productData) {
 
   const payload = {
     link: productData.link || "",
-    asin: productData.asin || "",
+    sku: productData.sku || productData.asin || "",
+    asin: productData.asin || productData.sku || "",
     brand: productData.brand || "",
     price: productData.price || "",
     variants: productData.variants || "",
-    image: productData.image || ""
+    image: productData.image || "",
+    source: productData.source || ""
   };
 
   const controller = new AbortController();
