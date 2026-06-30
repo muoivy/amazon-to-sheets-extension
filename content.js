@@ -93,6 +93,10 @@
         {
           label: "Size",
           selector: "#inline-twister-expanded-dimension-text-size_name"
+        },
+        {
+          label: "Style",
+          selector: "#inline-twister-expanded-dimension-text-style_name"
         }
       ]
     },

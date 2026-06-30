@@ -113,13 +113,21 @@ function doPost(e) {
       image: data.image || ""
     };
 
-    // Tìm row đã có Product Link trùng → update, không tạo mới
+    // Tìm row đã có SKU/ASIN trùng, sau đó fallback theo ASIN trong Product Link.
     const linkColumnIndex = findColumnIndexByAliases(headerMap, HEADER_ALIASES["link"]);
+    const asinColumnIndex = findColumnIndexByAliases(headerMap, HEADER_ALIASES["asin"]);
     let targetRow = null;
     let isUpdate = false;
 
+    if (asinColumnIndex && valuesToWrite.asin) {
+      targetRow = findRowByAsin(sheet, asinColumnIndex, valuesToWrite.asin);
+      if (targetRow) {
+        isUpdate = true;
+      }
+    }
+
     if (linkColumnIndex && valuesToWrite.link) {
-      targetRow = findRowByLink(sheet, linkColumnIndex, valuesToWrite.link);
+      targetRow = targetRow || findRowByLink(sheet, linkColumnIndex, valuesToWrite.link);
       if (targetRow) {
         isUpdate = true;
       }
@@ -143,9 +151,13 @@ function doPost(e) {
         return;
       }
 
-      // Khi update: bỏ qua ghi đè cột link (đã có rồi)
+      // Khi update: giữ Product Link cũ nếu ô này đã có dữ liệu.
       if (isUpdate && field === "link") {
-        return;
+        const currentLink = String(sheet.getRange(targetRow, columnIndex).getDisplayValue() || "").trim();
+
+        if (currentLink) {
+          return;
+        }
       }
 
       writeCellValue(sheet, targetRow, columnIndex, field, valuesToWrite[field]);
@@ -257,10 +269,66 @@ function findColumnIndexByAliases(headerMap, aliases) {
   return null;
 }
 
-/**
- * Tìm row đã có link trùng trong cột Product Link.
- * Trả về row index (1-based) nếu tìm thấy, null nếu không.
- */
+function normalizeAsin(value) {
+  const clean = String(value || "").trim().toUpperCase();
+
+  return /^[A-Z0-9]{10}$/.test(clean) ? clean : "";
+}
+
+function extractAsinFromLink(value) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return "";
+  }
+
+  const patterns = [
+    /\/dp\/([A-Z0-9]{10})(?:[/?#&]|$)/i,
+    /\/gp\/product\/([A-Z0-9]{10})(?:[/?#&]|$)/i,
+    /\/product\/([A-Z0-9]{10})(?:[/?#&]|$)/i,
+    /[?&]asin=([A-Z0-9]{10})(?:[&#]|$)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+
+    if (match && match[1]) {
+      return match[1].toUpperCase();
+    }
+  }
+
+  return normalizeAsin(text);
+}
+
+function findRowByAsin(sheet, asinColumnIndex, asinToFind) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < DATA_START_ROW) {
+    return null;
+  }
+
+  const normalizedTarget = normalizeAsin(asinToFind);
+
+  if (!normalizedTarget) {
+    return null;
+  }
+
+  const numberOfRows = lastRow - DATA_START_ROW + 1;
+  const values = sheet
+    .getRange(DATA_START_ROW, asinColumnIndex, numberOfRows, 1)
+    .getDisplayValues();
+
+  for (let i = 0; i < values.length; i++) {
+    const cellAsin = normalizeAsin(values[i][0]);
+
+    if (cellAsin && cellAsin === normalizedTarget) {
+      return DATA_START_ROW + i;
+    }
+  }
+
+  return null;
+}
+
 function findRowByLink(sheet, linkColumnIndex, linkToFind) {
   const lastRow = sheet.getLastRow();
 
@@ -274,10 +342,15 @@ function findRowByLink(sheet, linkColumnIndex, linkToFind) {
     .getDisplayValues();
 
   const normalizedTarget = String(linkToFind).trim().toLowerCase();
+  const targetAsin = extractAsinFromLink(linkToFind);
 
   for (let i = 0; i < values.length; i++) {
     const cellValue = String(values[i][0] || "").trim().toLowerCase();
     if (cellValue && cellValue === normalizedTarget) {
+      return DATA_START_ROW + i;
+    }
+
+    if (targetAsin && extractAsinFromLink(cellValue) === targetAsin) {
       return DATA_START_ROW + i;
     }
   }
